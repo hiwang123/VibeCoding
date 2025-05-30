@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Boat Racing Game</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; }
+        .boat-track { display: flex; justify-content: center; margin: 10px 0; align-items: center; }
+        .block { width: 20px; height: 20px; margin: 2px; }
+        .player-label { margin-right: 10px; min-width: 80px; text-align: right; }
+
+        .animation-container { position: relative; width: 100%; height: 200px; overflow: hidden; margin: 20px 0; background: #eef; }
+        .arrow { position: absolute; font-size: 24px; animation: floatUp 2s linear forwards; left: 50%; transform: translateX(-50%); }
+        .hit-line { position: absolute; bottom: 160px; left: 0; width: 100%; height: 2px; background: red; z-index: 1; }
+
+        @keyframes floatUp {
+            0% { bottom: -30px; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { bottom: 200px; opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Boat Racing Game</h1>
+    <div>
+        <button onclick="createRoom()">Create Room</button>
+        <input id="roomIdInput" placeholder="Room ID">
+        <button onclick="joinRoom()">Join Room</button>
+    </div>
+    <div id="game">
+        <p id="status"></p>
+        <button onclick="startGame()">Start Game</button>
+        <div class="animation-container" id="animationContainer">
+            <div class="hit-line"></div>
+        </div>
+        <div id="tracks"></div>
+    </div>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:8080");
+        let roomId = "";
+        let playerId = Math.random().toString(36).substr(2, 9);
+
+        const directionMap = {
+            up: '⬆️',
+            right: '➡️',
+            down: '⬇️',
+            left: '⬅️'
+        };
+        
+        const startIcon = '🏝️';
+        const boatIcon = '🚣';
+        const finishIcon = '🏁';
+
+        const activeArrows = [];
+
+        ws.onmessage = (msg) => {
+            const data = JSON.parse(msg.data);
+
+            if (data.type === 'room_created') {
+                roomId = data.roomId;
+                document.getElementById('status').innerText = `Room created: ${roomId}`;
+            } else if (data.type === 'joined') {
+                roomId = data.roomId;
+                document.getElementById('status').innerText = `Joined room: ${roomId}`;
+            } else if (data.type === 'ready_to_start') {
+                document.getElementById('status').innerText = "Ready to start game";
+            } else if (data.type === 'show_direction') {
+                showAnimatedArrow(data.direction);
+                if (data.progress) {
+                    updateProgress(data.progress);
+                }
+            } else if (data.type === 'game_over') {
+                document.getElementById('status').innerText = `Game Over! Winner: ${data.winner}`;
+                updateProgress(data.progress);
+            }
+        };
+
+        function createRoom() {
+            ws.send(JSON.stringify({ type: 'create_room' }));
+        }
+
+        function joinRoom() {
+            roomId = document.getElementById('roomIdInput').value;
+            ws.send(JSON.stringify({ type: 'join_room', roomId }));
+        }
+
+        function startGame() {
+            ws.send(JSON.stringify({ type: 'start_game', roomId }));
+        }
+
+        function updateProgress(progress) {
+            console.log('asdf ' + progress);
+            const container = document.getElementById('tracks');
+            container.innerHTML = '';
+            for (let pid in progress) {
+                const track = document.createElement('div');
+                track.className = 'boat-track';
+
+                const label = document.createElement('div');
+                label.className = 'player-label';
+                label.innerText = pid === playerId ? 'You' : pid;
+                track.appendChild(label);
+                
+                const start = document.createElement('div');
+                start.innerText = startIcon;
+                track.appendChild(start);
+                
+                for (let i = 0; i < 11; i++) {
+                    const block = document.createElement('div');
+                    block.className = 'block';
+                    track.appendChild(block);
+                }                
+                track.childNodes[progress[pid] + 2].innerText = boatIcon;
+
+                const finish = document.createElement('div');
+                finish.innerText = finishIcon;
+                track.appendChild(finish);
+                container.appendChild(track);
+            }
+        }
+
+        function showAnimatedArrow(direction) {
+            const arrow = document.createElement('div');
+            arrow.className = 'arrow';
+            arrow.innerText = directionMap[direction] || direction;
+            arrow.dataset.direction = direction;
+            arrow.dataset.timestamp = Date.now();
+            const container = document.getElementById('animationContainer');
+            container.appendChild(arrow);
+            activeArrows.push(arrow);
+
+            setTimeout(() => {
+                const index = activeArrows.indexOf(arrow);
+                if (index > -1) activeArrows.splice(index, 1);
+                if (arrow.parentElement) arrow.parentElement.removeChild(arrow);
+            }, 2000);
+        }
+
+        document.addEventListener('keydown', (e) => {
+            const keyMap = {
+                'ArrowUp': 'up',
+                'ArrowRight': 'right',
+                'ArrowDown': 'down',
+                'ArrowLeft': 'left'
+            };
+            const hitWindow = 400; // ms window for a valid hit
+
+            const direction = keyMap[e.key];
+            if (direction) {
+                const now = Date.now();
+                for (let i = 0; i < activeArrows.length; i++) {
+                    const arrow = activeArrows[i];
+                    const arrowDirection = arrow.dataset.direction;
+                    const timestamp = parseInt(arrow.dataset.timestamp);
+                    const diff = Math.abs(now - (timestamp + 1800)); // target hit time at ~1s
+
+                    if (diff <= hitWindow && arrowDirection === direction) {
+                        ws.send(JSON.stringify({ type: 'key_press', roomId, direction }));
+                        arrow.style.color = 'green';
+                        return; // only allow one match
+                    }
+                }
+                // no match or bad timing
+                console.log("Missed or wrong timing");
+            }
+        });
+    </script>
+</body>
+</html>
+
